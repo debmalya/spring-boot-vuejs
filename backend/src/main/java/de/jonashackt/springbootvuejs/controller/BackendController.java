@@ -1,5 +1,7 @@
 package de.jonashackt.springbootvuejs.controller;
 
+import java.util.HashMap;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,6 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,10 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
-import com.fasterxml.jackson.databind.deser.DataFormatReaders.Match;
-
 import de.jonashackt.springbootvuejs.domain.User;
 import de.jonashackt.springbootvuejs.repository.UserRepository;
+import jash.debmalya.springbootvuejs.domain.MatchDay;
 
 @RestController()
 @RequestMapping("/api")
@@ -33,6 +35,10 @@ public class BackendController {
 
 	public static final String HELLO_TEXT = "Hello from Spring Boot Backend!";
 
+	private static HashMap<Integer, MatchDay> cache = new HashMap<>();
+
+	private static HashMap<String, HashMap<Integer, MatchDay>> cacheCompetition = new HashMap<>();
+
 	@Autowired
 	private UserRepository userRepository;
 
@@ -41,6 +47,9 @@ public class BackendController {
 
 	@Value("${football-data.api-epl-matchday}")
 	private String matchDayPLUrl;
+
+	@Value("${football-data.api-matchday}")
+	private String matchDayUrl;
 
 	@RequestMapping(path = "/hello")
 	public @ResponseBody String sayHello() {
@@ -65,23 +74,75 @@ public class BackendController {
 		return userRepository.findById(id).get();
 	}
 
+	@CrossOrigin(origins = "http://localhost:8080")
 	@GetMapping(path = "/epl/{day}")
-	public ResponseEntity<Match> getEPLByDay(@PathVariable("day") int day) {
+	public @ResponseBody MatchDay getEPLByDay(@PathVariable("day") int day) {
 		LOG.info("Reading match day details, day  " + day + " by calling api.");
-		RestTemplate restTemplate = new RestTemplate();
+		MatchDay matchDay = cache.get(day);
+		if (matchDay == null) {
+			RestTemplate restTemplate = new RestTemplate();
 
-		HttpHeaders headers = new HttpHeaders();
-		headers.add("X-Auth-Token", footbalDataApiKey);
-		HttpEntity<String> entity = new HttpEntity<String>("parameters", headers);
+			HttpHeaders headers = new HttpHeaders();
+			headers.add("X-Auth-Token", footbalDataApiKey);
+			HttpEntity<String> entity = new HttpEntity<String>("parameters", headers);
 
-		try {
-			ResponseEntity<Match> rest = restTemplate.exchange(matchDayPLUrl + day, HttpMethod.GET, entity,
-					Match.class);
-			return rest;
-		} catch (RestClientException rce) {
-			LOG.error(rce.getMessage(),rce);
-			return new ResponseEntity(HttpStatus.INTERNAL_SERVER_ERROR);
+			try {
+				LOG.info("Called with headers :" + headers);
+				ResponseEntity<MatchDay> rest = restTemplate.exchange(matchDayPLUrl + day, HttpMethod.GET, entity,
+						MatchDay.class);
+				matchDay = rest.getBody();
+				cache.put(day, matchDay);
+
+			} catch (RestClientException rce) {
+
+				LOG.error(rce.getMessage(), rce);
+				return null;
+			}
 		}
+		return matchDay;
+
+	}
+
+	@CrossOrigin(origins = "http://localhost:8080")
+	@GetMapping(path = "/comp/{competition}/{day}")
+	public @ResponseBody MatchDay getByDay(@PathVariable("competition") String competition,
+			@PathVariable("day") int day) {
+		LOG.info("Reading match day comp '"+competition+"' details, day  '" + day + "' by calling api.");
+		MatchDay matchDay = null;
+
+		HashMap<Integer, MatchDay> competitionDayWise = cacheCompetition.get(competition);
+		if (competitionDayWise != null) {
+			matchDay = competitionDayWise.get(day);
+		} else {
+			competitionDayWise = new HashMap<>();
+		}
+
+		if (matchDay == null) {
+			RestTemplate restTemplate = new RestTemplate();
+
+			HttpHeaders headers = new HttpHeaders();
+			headers.add("X-Auth-Token", footbalDataApiKey);
+			HttpEntity<String> entity = new HttpEntity<String>("parameters", headers);
+
+			try {
+				LOG.info("Called with headers :" + headers);
+				matchDayUrl = matchDayUrl+competition+"/matches/?matchday=";
+				LOG.info("matchDayUrl :" + matchDayUrl);
+				ResponseEntity<MatchDay> rest = restTemplate.exchange(matchDayUrl + day, HttpMethod.GET, entity,
+						MatchDay.class);
+				matchDay = rest.getBody();
+				competitionDayWise.put(day, matchDay);
+				cacheCompetition.put(competition, competitionDayWise);
+
+			} catch (RestClientException rce) {
+
+				LOG.error(rce.getMessage(), rce);
+				return null;
+			}
+		} else {
+			LOG.info(competition + " match day " + day + " retrieved from cache");
+		}
+		return matchDay;
 
 	}
 
